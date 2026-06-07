@@ -1,0 +1,1493 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PC FLIP Fluid Solver - Particle/Grid</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #060812;
+      color: white;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      user-select: none;
+      cursor: crosshair;
+    }
+
+    canvas {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      display: block;
+      background:
+        radial-gradient(circle at 50% 28%, rgba(33, 74, 130, 0.22), transparent 42%),
+        linear-gradient(#060914, #050711 55%, #030409);
+    }
+
+    .hud {
+      position: fixed;
+      left: 14px;
+      top: 14px;
+      z-index: 10;
+      max-width: 470px;
+      color: rgba(255,255,255,0.9);
+      background: rgba(0,0,0,0.34);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 15px;
+      padding: 12px 13px;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 16px 45px rgba(0,0,0,0.28);
+      font-size: 13px;
+      line-height: 1.45;
+      pointer-events: none;
+    }
+
+    .hud b { color: #9ed7ff; }
+    .hud .dim { color: rgba(255,255,255,0.62); margin-top: 4px; }
+
+    .panel {
+      position: fixed;
+      right: 14px;
+      top: 14px;
+      z-index: 10;
+      width: 265px;
+      display: grid;
+      gap: 8px;
+      color: rgba(255,255,255,0.88);
+      background: rgba(0,0,0,0.31);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 16px;
+      padding: 10px;
+      backdrop-filter: blur(12px);
+      font-size: 13px;
+      box-shadow: 0 16px 45px rgba(0,0,0,0.24);
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 94px 1fr 40px;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .row span:first-child { color: rgba(255,255,255,0.75); }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: #68c7ff;
+    }
+
+    button, select {
+      color: white;
+      background: rgba(255,255,255,0.10);
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 12px;
+      padding: 8px 10px;
+      font: inherit;
+      outline: none;
+    }
+
+    button { cursor: pointer; }
+    button:hover, select:hover { background: rgba(255,255,255,0.16); }
+    button:active { transform: scale(0.985); }
+
+    .buttons {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .stats {
+      position: fixed;
+      left: 14px;
+      bottom: 14px;
+      z-index: 10;
+      color: rgba(255,255,255,0.70);
+      background: rgba(0,0,0,0.30);
+      border: 1px solid rgba(255,255,255,0.11);
+      border-radius: 13px;
+      padding: 9px 11px;
+      backdrop-filter: blur(12px);
+      font-size: 12px;
+      line-height: 1.42;
+      pointer-events: none;
+      min-width: 320px;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="view"></canvas>
+
+  <div class="hud">
+    <b>FLIP fluid solver:</b> parçacıklar sıvıyı taşır, grid basınç çözer.<br>
+    <b>Sol tık sürükle:</b> mouse collider gibi sıvıyı iter/sürükler.<br>
+    <b>Shift + sol tık:</b> sıvı ekler. <b>Sağ tık:</b> güçlü velocity splat.<br>
+    <b>Çift tık:</b> splash. <b>Space:</b> reset. <b>V:</b> velocity grid. <b>G:</b> grid overlay.
+    <div class="dim">
+      Pipeline: particle→grid, gravity, pressure projection, grid→particle FLIP/PIC blend, particle advection, boundary collision.
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="row">
+      <span>FLIP oranı</span>
+      <input id="flip" type="range" min="0" max="1" step="0.01" value="0.75">
+      <span id="flipVal">0.75</span>
+    </div>
+
+    <div class="row">
+      <span>Basınç iter</span>
+      <input id="iters" type="range" min="10" max="90" step="1" value="45">
+      <span id="itersVal">45</span>
+    </div>
+
+    <div class="row">
+      <span>Yerçekimi</span>
+      <input id="grav" type="range" min="0" max="95" step="1" value="42">
+      <span id="gravVal">42</span>
+    </div>
+
+    <div class="row">
+      <span>Mouse güç</span>
+      <input id="mousePower" type="range" min="0.2" max="4.0" step="0.05" value="1.65">
+      <span id="mousePowerVal">1.65</span>
+    </div>
+
+    <div class="row">
+      <span>Fırça</span>
+      <input id="brush" type="range" min="2" max="13" step="1" value="6">
+      <span id="brushVal">6</span>
+    </div>
+
+    <div class="row">
+      <span>Viskozite</span>
+      <input id="visc" type="range" min="0" max="0.12" step="0.005" value="0.018">
+      <span id="viscVal">0.018</span>
+    </div>
+
+    <div class="row">
+      <span>Vorticity</span>
+      <input id="vort" type="range" min="0" max="0.5" step="0.01" value="0.12">
+      <span id="vortVal">0.12</span>
+    </div>
+
+    <div class="row">
+      <span>Damping</span>
+      <input id="damp" type="range" min="0.0" max="0.15" step="0.005" value="0.008">
+      <span id="dampVal">0.008</span>
+    </div>
+
+    <select id="renderMode">
+      <option value="water">Water render</option>
+      <option value="particles">Particles only</option>
+      <option value="speed">Velocity magnitude</option>
+      <option value="pressure">Pressure field</option>
+      <option value="mass">Grid mass / particle density</option>
+    </select>
+
+    <div class="buttons">
+      <button id="velBtn">Velocity: Off</button>
+      <button id="gridBtn">Grid: Off</button>
+      <button id="pauseBtn">Pause</button>
+      <button id="resetBtn">Reset</button>
+      <button id="dropBtn">Damla</button>
+      <button id="clearBtn">Temizle</button>
+    </div>
+  </div>
+
+  <div class="stats" id="stats"></div>
+
+<script>
+(() => {
+  "use strict";
+
+  const canvas = document.getElementById("view");
+  const ctx = canvas.getContext("2d", { alpha: false });
+
+  const flipEl = document.getElementById("flip");
+  const itersEl = document.getElementById("iters");
+  const gravEl = document.getElementById("grav");
+  const mousePowerEl = document.getElementById("mousePower");
+  const brushEl = document.getElementById("brush");
+  const viscEl = document.getElementById("visc");
+  const renderModeEl = document.getElementById("renderMode");
+
+  const vals = {
+    flip: document.getElementById("flipVal"),
+    iters: document.getElementById("itersVal"),
+    grav: document.getElementById("gravVal"),
+    mousePower: document.getElementById("mousePowerVal"),
+    brush: document.getElementById("brushVal"),
+    visc: document.getElementById("viscVal"),
+    vort: document.getElementById("vortVal"),
+    damp: document.getElementById("dampVal"),
+  };
+
+  const velBtn = document.getElementById("velBtn");
+  const gridBtn = document.getElementById("gridBtn");
+  const pauseBtn = document.getElementById("pauseBtn");
+  const resetBtn = document.getElementById("resetBtn");
+  const clearBtn = document.getElementById("clearBtn");
+  const dropBtn = document.getElementById("dropBtn");
+  const statsEl = document.getElementById("stats");
+
+  let DPR = 1, CW = 0, CH = 0;
+  let NX = 80, NY = 60, NZ = 60, N = NX * NY * NZ;
+
+  let u, v, w, uOld, vOld, wOld, uNew, vNew, wNew;
+  let mass, pressure, pressureTmp, divergence, cellType;
+  let pX, pY, pZ, pVX, pVY, pVZ, pColor;
+  let pCount = 0;
+  let MAX_PARTICLES = 12000;
+  let vorticityX, vorticityY, vorticityMag;
+  let particleDensity, restDensity;
+
+  let off = document.createElement("canvas");
+  let offCtx = off.getContext("2d", { willReadFrequently: true });
+  let img = null;
+  let pix = null;
+
+  let showVelocity = false;
+  let showGrid = false;
+  let paused = false;
+  let last = performance.now();
+  let fps = 60;
+  let frame = 0;
+
+  const mouse = {
+    x: 0, y: 0,
+    gx: 0, gy: 0,
+    pgx: 0, pgy: 0,
+    vx: 0, vy: 0,
+    left: false,
+    right: false,
+    shift: false
+  };
+
+  function idx(x, y, z) {
+    // Support both 2D calls idx(x,y) and 3D calls idx(x,y,z).
+    // Floor inputs to produce an integer linear index.
+    if (z === undefined) z = 0;
+    return (Math.floor(x) + Math.floor(y) * NX + Math.floor(z) * NX * NY) | 0;
+  }
+  function clamp(x, a, b) { return Math.max(a, Math.min(b, x)); }
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function rand(a, b) { return a + Math.random() * (b - a); }
+
+  function allocGrid() {
+    N = NX * NY * NZ;
+    u = new Float32Array(N);
+    v = new Float32Array(N);
+    w = new Float32Array(N);
+    uOld = new Float32Array(N);
+    vOld = new Float32Array(N);
+    wOld = new Float32Array(N);
+    uNew = new Float32Array(N);
+    vNew = new Float32Array(N);
+    wNew = new Float32Array(N);
+    mass = new Float32Array(N);
+    pressure = new Float32Array(N);
+    pressureTmp = new Float32Array(N);
+    divergence = new Float32Array(N);
+    cellType = new Uint8Array(N);
+    vorticityX = new Float32Array(N);
+    vorticityY = new Float32Array(N);
+    vorticityMag = new Float32Array(N);
+    particleDensity = new Float32Array(N);
+    restDensity = 0;
+
+    off.width = NX;
+    off.height = NY;
+    img = offCtx.createImageData(NX, NY);
+    pix = img.data;
+  }
+
+  function allocParticles() {
+    pX = new Float32Array(MAX_PARTICLES);
+    pY = new Float32Array(MAX_PARTICLES);
+    pZ = new Float32Array(MAX_PARTICLES);
+    pVX = new Float32Array(MAX_PARTICLES);
+    pVY = new Float32Array(MAX_PARTICLES);
+    pVZ = new Float32Array(MAX_PARTICLES);
+    pColor = new Float32Array(MAX_PARTICLES);
+    pCount = 0;
+  }
+
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    CW = Math.floor(window.innerWidth * DPR);
+    CH = Math.floor(window.innerHeight * DPR);
+    canvas.width = CW;
+    canvas.height = CH;
+  }
+
+  window.addEventListener("resize", resize);
+  allocGrid();
+  allocParticles();
+  resize();
+
+  function updateLabels() {
+    vals.flip.textContent = Number(flipEl.value).toFixed(2);
+    vals.iters.textContent = itersEl.value;
+    vals.grav.textContent = gravEl.value;
+    vals.mousePower.textContent = Number(mousePowerEl.value).toFixed(2);
+    vals.brush.textContent = brushEl.value;
+    vals.visc.textContent = Number(viscEl.value).toFixed(3);
+    vals.vort.textContent = Number(vortEl.value).toFixed(2);
+    vals.damp.textContent = Number(dampEl.value).toFixed(3);
+  }
+  const vortEl = document.getElementById("vort");
+  const dampEl = document.getElementById("damp");
+  [flipEl, itersEl, gravEl, mousePowerEl, brushEl, viscEl, vortEl, dampEl].forEach(e => e.addEventListener("input", updateLabels));
+  updateLabels();
+
+  function clearGrid() {
+    u.fill(0); v.fill(0); w.fill(0); uOld.fill(0); vOld.fill(0); wOld.fill(0);
+    uNew.fill(0); vNew.fill(0); wNew.fill(0); mass.fill(0);
+    pressure.fill(0); pressureTmp.fill(0); divergence.fill(0); cellType.fill(0);
+  }
+
+  function clearParticles() {
+    pCount = 0;
+  }
+
+  function addParticle(x, y, z, vx = 0, vy = 0, vz = 0) {
+    if (pCount >= MAX_PARTICLES) return false;
+    pX[pCount] = clamp(x, 1.2, NX - 2.2);
+    pY[pCount] = clamp(y, 1.2, NY - 2.2);
+    pZ[pCount] = clamp(z, 1.2, NZ - 2.2);
+    pVX[pCount] = vx;
+    pVY[pCount] = vy;
+    pVZ[pCount] = vz;
+    pColor[pCount] = Math.random();
+    pCount++;
+    return true;
+  }
+
+  function seedTank() {
+    clearGrid();
+    clearParticles();
+
+    const spacing = 1.0;
+    const startX = NX * 0.2;
+    const endX = NX * 0.8;
+    const startY = NY * 0.3;
+    const endY = NY * 0.8;
+    const startZ = NZ * 0.2;
+    const endZ = NZ * 0.8;
+
+    for (let z = startZ; z < endZ; z += spacing) {
+      for (let y = startY; y < endY; y += spacing) {
+        for (let x = startX; x < endX; x += spacing) {
+          if (pCount >= MAX_PARTICLES * 0.6) return;
+          addParticle(x + rand(-0.2, 0.2), y + rand(-0.2, 0.2), z + rand(-0.2, 0.2), rand(-0.2, 0.2), rand(-0.2, 0.2), rand(-0.2, 0.2));
+        }
+      }
+    }
+  function addDrop(cx = NX * 0.5, cy = NY * 0.3, cz = NZ * 0.5, radius = 6) {
+    const spacing = 0.85;
+    for (let z = -radius; z <= radius; z += spacing) {
+      for (let y = -radius; y <= radius; y += spacing) {
+        for (let x = -radius; x <= radius; x += spacing) {
+          if (x * x + y * y + z * z <= radius * radius) {
+            addParticle(cx + x + rand(-0.15, 0.15), cy + y + rand(-0.15, 0.15), cz + z + rand(-0.15, 0.15), rand(-1.5, 1.5), rand(-1.0, 2.0), rand(-1.5, 1.5));
+          }
+        }
+      }
+    }
+  function sampleField(f, x, y, z = (NZ - 1) / 2) {
+    // Accept optional z for 2D-style calls. Default to middle Z-slice.
+    x = clamp(x, 0.5, NX - 1.5);
+    y = clamp(y, 0.5, NY - 1.5);
+    z = clamp(z, 0.5, NZ - 1.5);
+
+    const x0 = Math.floor(x);
+    const y0 = Math.floor(y);
+    const z0 = Math.floor(z);
+    const tx = x - x0;
+    const ty = y - y0;
+    const tz = z - z0;
+
+    // Trilinear interpolation for 3D
+    const c000 = f[idx(x0, y0, z0)];
+    const c100 = f[idx(x0 + 1, y0, z0)];
+    const c010 = f[idx(x0, y0 + 1, z0)];
+    const c110 = f[idx(x0 + 1, y0 + 1, z0)];
+    const c001 = f[idx(x0, y0, z0 + 1)];
+    const c101 = f[idx(x0 + 1, y0, z0 + 1)];
+    const c011 = f[idx(x0, y0 + 1, z0 + 1)];
+    const c111 = f[idx(x0 + 1, y0 + 1, z0 + 1)];
+
+    const c00 = lerp(c000, c100, tx);
+    const c01 = lerp(c001, c101, tx);
+    const c10 = lerp(c010, c110, tx);
+    const c11 = lerp(c011, c111, tx);
+    const c0 = lerp(c00, c10, ty);
+    const c1 = lerp(c01, c11, ty);
+    return lerp(c0, c1, tz);
+  }
+
+  function computeParticleDensity() {
+    particleDensity.fill(0);
+    
+    for (let i = 0; i < pCount; i++) {
+      const x = clamp(pX[i], 0.5, NX - 1.5);
+      const y = clamp(pY[i], 0.5, NY - 1.5);
+      const z = clamp(pZ[i], 0.5, NZ - 1.5);
+      const x0 = Math.floor(x);
+      const y0 = Math.floor(y);
+      const z0 = Math.floor(z);
+      const tx = x - x0;
+      const ty = y - y0;
+      const tz = z - z0;
+
+      const w000 = (1 - tx) * (1 - ty) * (1 - tz);
+      const w100 = tx * (1 - ty) * (1 - tz);
+      const w010 = (1 - tx) * ty * (1 - tz);
+      const w110 = tx * ty * (1 - tz);
+      const w001 = (1 - tx) * (1 - ty) * tz;
+      const w101 = tx * (1 - ty) * tz;
+      const w011 = (1 - tx) * ty * tz;
+      const w111 = tx * ty * tz;
+
+      particleDensity[idx(x0, y0, z0)] += w000;
+      if (x0 + 1 < NX) particleDensity[idx(x0 + 1, y0, z0)] += w100;
+      if (y0 + 1 < NY) particleDensity[idx(x0, y0 + 1, z0)] += w010;
+      if (x0 + 1 < NX && y0 + 1 < NY) particleDensity[idx(x0 + 1, y0 + 1, z0)] += w110;
+      if (z0 + 1 < NZ) particleDensity[idx(x0, y0, z0 + 1)] += w001;
+      if (x0 + 1 < NX && z0 + 1 < NZ) particleDensity[idx(x0 + 1, y0, z0 + 1)] += w101;
+      if (y0 + 1 < NY && z0 + 1 < NZ) particleDensity[idx(x0, y0 + 1, z0 + 1)] += w011;
+      if (x0 + 1 < NX && y0 + 1 < NY && z0 + 1 < NZ) particleDensity[idx(x0 + 1, y0 + 1, z0 + 1)] += w111;
+    }
+
+    // Initialize rest density on first frame
+    if (restDensity <= 0) {
+      let sum = 0, count = 0;
+      for (let i = 0; i < N; i++) {
+        if (cellType[i] > 0) {
+          sum += particleDensity[i];
+          count++;
+        }
+      }
+      restDensity = count > 0 ? sum / count : 1.0;
+    }
+  }
+
+  function scatterVelocityToGrid() {
+    u.fill(0); v.fill(0); w.fill(0);
+    mass.fill(0);
+    cellType.fill(0);
+
+    // Scatter particle velocities to grid
+    for (let i = 0; i < pCount; i++) {
+      const x = clamp(pX[i], 0.5, NX - 1.5);
+      const y = clamp(pY[i], 0.5, NY - 1.5);
+      const z = clamp(pZ[i], 0.5, NZ - 1.5);
+      const x0 = Math.floor(x);
+      const y0 = Math.floor(y);
+      const z0 = Math.floor(z);
+      const tx = x - x0;
+      const ty = y - y0;
+      const tz = z - z0;
+
+      const w000 = (1 - tx) * (1 - ty) * (1 - tz);
+      const w100 = tx * (1 - ty) * (1 - tz);
+      const w010 = (1 - tx) * ty * (1 - tz);
+      const w110 = tx * ty * (1 - tz);
+      const w001 = (1 - tx) * (1 - ty) * tz;
+      const w101 = tx * (1 - ty) * tz;
+      const w011 = (1 - tx) * ty * tz;
+      const w111 = tx * ty * tz;
+
+      let j = idx(x0, y0, z0);
+      u[j] += pVX[i] * w000; v[j] += pVY[i] * w000; w[j] += pVZ[i] * w000; mass[j] += w000;
+      j = idx(x0 + 1, y0, z0);
+      u[j] += pVX[i] * w100; v[j] += pVY[i] * w100; w[j] += pVZ[i] * w100; mass[j] += w100;
+      j = idx(x0, y0 + 1, z0);
+      u[j] += pVX[i] * w010; v[j] += pVY[i] * w010; w[j] += pVZ[i] * w010; mass[j] += w010;
+      j = idx(x0 + 1, y0 + 1, z0);
+      u[j] += pVX[i] * w110; v[j] += pVY[i] * w110; w[j] += pVZ[i] * w110; mass[j] += w110;
+      j = idx(x0, y0, z0 + 1);
+      u[j] += pVX[i] * w001; v[j] += pVY[i] * w001; w[j] += pVZ[i] * w001; mass[j] += w001;
+      j = idx(x0 + 1, y0, z0 + 1);
+      u[j] += pVX[i] * w101; v[j] += pVY[i] * w101; w[j] += pVZ[i] * w101; mass[j] += w101;
+      j = idx(x0, y0 + 1, z0 + 1);
+      u[j] += pVX[i] * w011; v[j] += pVY[i] * w011; w[j] += pVZ[i] * w011; mass[j] += w011;
+      j = idx(x0 + 1, y0 + 1, z0 + 1);
+      u[j] += pVX[i] * w111; v[j] += pVY[i] * w111; w[j] += pVZ[i] * w111; mass[j] += w111;
+    }
+
+    // Normalize and mark fluid cells
+    for (let z = 0; z < NZ; z++) {
+      for (let y = 0; y < NY; y++) {
+        for (let x = 0; x < NX; x++) {
+          const j = idx(x, y, z);
+          if (mass[j] > 0.0001) {
+            u[j] /= mass[j];
+            v[j] /= mass[j];
+            w[j] /= mass[j];
+            cellType[j] = 1;
+          }
+        }
+      }
+    }
+
+    // Extrapolate velocities into air cells (3D)
+    for (let iter = 0; iter < 3; iter++) {
+      uNew.set(u); vNew.set(v); wNew.set(w);
+      for (let z = 1; z < NZ - 1; z++) {
+        for (let y = 1; y < NY - 1; y++) {
+          for (let x = 1; x < NX - 1; x++) {
+            const j = idx(x, y, z);
+            if (cellType[j] > 0) continue;
+            let su = 0, sv = 0, sw = 0, c = 0;
+            const n = [idx(x-1,y,z),idx(x+1,y,z),idx(x,y-1,z),idx(x,y+1,z),idx(x,y,z-1),idx(x,y,z+1)];
+            for (const ni of n) {
+              if (cellType[ni] > 0) { su += u[ni]; sv += v[ni]; sw += w[ni]; c++; }
+            }
+            if (c > 0) { uNew[j] = su / c; vNew[j] = sv / c; wNew[j] = sw / c; }
+          }
+        }
+      }
+      u.set(uNew); v.set(vNew); w.set(wNew);
+    }
+  }
+
+  function applyGravityAndViscosity(dt) {
+    const g = Number(gravEl.value);
+    const visc = Number(viscEl.value);
+    const damp = Number(dampEl.value);
+
+    for (let z = 1; z < NZ - 1; z++) {
+      for (let y = 1; y < NY - 1; y++) {
+        for (let x = 1; x < NX - 1; x++) {
+          const j = idx(x, y, z);
+          if (!cellType[j]) continue;
+
+          v[j] += g * dt;
+
+          if (visc > 0) {
+            const lapU = u[idx(x-1,y,z)] + u[idx(x+1,y,z)] + u[idx(x,y-1,z)] + u[idx(x,y+1,z)] + u[idx(x,y,z-1)] + u[idx(x,y,z+1)] - 6 * u[j];
+            const lapV = v[idx(x-1,y,z)] + v[idx(x+1,y,z)] + v[idx(x,y-1,z)] + v[idx(x,y+1,z)] + v[idx(x,y,z-1)] + v[idx(x,y,z+1)] - 6 * v[j];
+            const lapW = w[idx(x-1,y,z)] + w[idx(x+1,y,z)] + w[idx(x,y-1,z)] + w[idx(x,y+1,z)] + w[idx(x,y,z-1)] + w[idx(x,y,z+1)] - 6 * w[j];
+            u[j] += lapU * visc; v[j] += lapV * visc; w[j] += lapW * visc;
+          }
+
+          if (damp > 0) {
+            const d = 1.0 - damp * dt;
+            u[j] *= d; v[j] *= d; w[j] *= d;
+          }
+        }
+      }
+    }
+  }
+
+  function splatGridVelocity(gx, gy, radius, vx, vy, addParticles = false) {
+    const r = radius;
+    const x0 = Math.max(1, Math.floor(gx - r));
+    const x1 = Math.min(NX - 2, Math.ceil(gx + r));
+    const y0 = Math.max(1, Math.floor(gy - r));
+    const y1 = Math.min(NY - 2, Math.ceil(gy + r));
+
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const dx = x - gx;
+        const dy = y - gy;
+        const d2 = dx * dx + dy * dy;
+        if (d2 > r * r) continue;
+        const w = Math.exp(-d2 / (r * r * 0.42));
+        const j = idx(x, y);
+        u[j] += vx * w;
+        v[j] += vy * w;
+      }
+    }
+
+    if (addParticles) {
+      const spacing = 0.68;
+      for (let y = -r; y <= r; y += spacing) {
+        for (let x = -r; x <= r; x += spacing) {
+          if (x * x + y * y <= r * r && Math.random() < 0.55) {
+            addParticle(gx + x + rand(-0.16, 0.16), gy + y + rand(-0.16, 0.16), vx * 0.18 + rand(-0.6, 0.6), vy * 0.18 + rand(-0.6, 0.6));
+          }
+        }
+      }
+    }
+  }
+
+  function pushParticlesWithMouse(dt) {
+    if (!mouse.left && !mouse.right) return;
+
+    const power = Number(mousePowerEl.value);
+    const brush = Number(brushEl.value);
+    const r = brush * (mouse.right ? 1.55 : 1.0);
+    const r2 = r * r;
+    const mvx = mouse.vx;
+    const mvy = mouse.vy;
+
+    for (let i = 0; i < pCount; i++) {
+      const dx = pX[i] - mouse.gx;
+      const dy = pY[i] - mouse.gy;
+      const d2 = dx * dx + dy * dy;
+      if (d2 > r2) continue;
+
+      const w = Math.exp(-d2 / (r2 * 0.42));
+      if (mouse.left) {
+        pVX[i] += mvx * w * 0.42 * power;
+        pVY[i] += mvy * w * 0.42 * power;
+
+        // Solid-ish mouse collider: particles inside brush are gently pushed outward too.
+        const d = Math.sqrt(d2) + 1e-4;
+        const pen = Math.max(0, r * 0.58 - d);
+        if (pen > 0 && !mouse.shift) {
+          pX[i] += dx / d * pen * 0.17;
+          pY[i] += dy / d * pen * 0.17;
+          pVX[i] += dx / d * pen * 9.0 * dt * power;
+          pVY[i] += dy / d * pen * 9.0 * dt * power;
+        }
+      }
+
+      if (mouse.right) {
+        pVX[i] += mvx * w * 0.85 * power;
+        pVY[i] += mvy * w * 0.85 * power;
+      }
+    }
+
+    if (mouse.shift && mouse.left) {
+      splatGridVelocity(mouse.gx, mouse.gy, brush, mouse.vx * 0.18, mouse.vy * 0.18, true);
+    }
+  }
+
+  function project(iterations) {
+    pressure.fill(0);
+    divergence.fill(0);
+
+    computeParticleDensity();
+
+    // Compute divergence in 3D
+    for (let z = 1; z < NZ - 1; z++) {
+      for (let y = 1; y < NY - 1; y++) {
+        for (let x = 1; x < NX - 1; x++) {
+          const j = idx(x, y, z);
+          if (cellType[j] !== 1) continue;
+
+          const divU = u[idx(x + 1, y, z)] - u[idx(x - 1, y, z)];
+          const divV = v[idx(x, y + 1, z)] - v[idx(x, y - 1, z)];
+          const divW = w[idx(x, y, z + 1)] - w[idx(x, y, z - 1)];
+          // Slightly increased divergence scaling for better incompressibility
+          divergence[j] = -0.55 * (divU + divV + divW);
+        }
+      }
+    }
+
+    // Gauss-Seidel iteration with conservative relaxation for stability
+    const relaxation = 1.0; // Conservative relaxation for numerical stability
+    for (let k = 0; k < iterations; k++) {
+      for (let z = 1; z < NZ - 1; z++) {
+        for (let y = 1; y < NY - 1; y++) {
+          for (let x = 1; x < NX - 1; x++) {
+            const j = idx(x, y, z);
+            if (cellType[j] !== 1) continue;
+
+            const l = idx(x - 1, y, z);
+            const r = idx(x + 1, y, z);
+            const t = idx(x, y - 1, z);
+            const b = idx(x, y + 1, z);
+            const d = idx(x, y, z - 1);
+            const u_ = idx(x, y, z + 1);
+
+            let pSum = 0, count = 0;
+            if (cellType[l] > 0) { pSum += pressure[l]; count++; }
+            if (cellType[r] > 0) { pSum += pressure[r]; count++; }
+            if (cellType[t] > 0) { pSum += pressure[t]; count++; }
+            if (cellType[b] > 0) { pSum += pressure[b]; count++; }
+            if (cellType[d] > 0) { pSum += pressure[d]; count++; }
+            if (cellType[u_] > 0) { pSum += pressure[u_]; count++; }
+
+            if (count > 0) {
+              const avgP = pSum / count;
+              // Standard Gauss-Seidel without over-relaxation
+              pressure[j] = avgP + divergence[j] * 0.5;
+            }
+          }
+        }
+      }
+
+      // Boundary conditions (3D)
+      for (let z = 0; z < NZ; z++) {
+        for (let x = 0; x < NX; x++) {
+          pressure[idx(x, 0, z)] = pressure[idx(x, 1, z)];
+          pressure[idx(x, NY - 1, z)] = pressure[idx(x, NY - 2, z)];
+        }
+        for (let y = 0; y < NY; y++) {
+          pressure[idx(0, y, z)] = pressure[idx(1, y, z)];
+          pressure[idx(NX - 1, y, z)] = pressure[idx(NX - 2, y, z)];
+        }
+      }
+    }
+
+    // Apply pressure gradient with stability checks
+    for (let z = 1; z < NZ - 1; z++) {
+      for (let y = 1; y < NY - 1; y++) {
+        for (let x = 1; x < NX - 1; x++) {
+          const j = idx(x, y, z);
+          if (cellType[j] !== 1) continue;
+
+          const pL = cellType[idx(x - 1, y, z)] > 0 ? pressure[idx(x - 1, y, z)] : pressure[j];
+          const pR = cellType[idx(x + 1, y, z)] > 0 ? pressure[idx(x + 1, y, z)] : pressure[j];
+          const pT = cellType[idx(x, y - 1, z)] > 0 ? pressure[idx(x, y - 1, z)] : pressure[j];
+          const pB = cellType[idx(x, y + 1, z)] > 0 ? pressure[idx(x, y + 1, z)] : pressure[j];
+          const pD = cellType[idx(x, y, z - 1)] > 0 ? pressure[idx(x, y, z - 1)] : pressure[j];
+          const pU = cellType[idx(x, y, z + 1)] > 0 ? pressure[idx(x, y, z + 1)] : pressure[j];
+
+          // Clamp pressure gradients to prevent extreme velocities
+          const gradX = 0.5 * (pR - pL);
+          const gradY = 0.5 * (pB - pT);
+          const gradZ = 0.5 * (pU - pD);
+          u[j] -= clamp(gradX, -8, 8);
+          v[j] -= clamp(gradY, -8, 8);
+          w[j] -= clamp(gradZ, -8, 8);
+        }
+      }
+    }
+
+    enforceGridBoundaries();
+
+    const vortConf = Number(vortEl.value);
+    if (vortConf > 0) applyVorticityConfinement(vortConf);
+  }
+
+  function computeVorticity() {
+    for (let y = 1; y < NY - 1; y++) {
+      for (let x = 1; x < NX - 1; x++) {
+        const j = idx(x, y);
+        const dvdx = 0.5 * (v[idx(x + 1, y)] - v[idx(x - 1, y)]);
+        const dudy = 0.5 * (u[idx(x, y + 1)] - u[idx(x, y - 1)]);
+        vorticityMag[j] = dvdx - dudy;
+      }
+    }
+  }
+
+  function applyVorticityConfinement(strength) {
+    // Skip 3D vorticity confinement for now (requires a proper 3D curl implementation).
+    if (NZ > 1) return;
+
+    computeVorticity();
+    const scale = strength * 0.018;
+
+    for (let y = 2; y < NY - 2; y++) {
+      for (let x = 2; x < NX - 2; x++) {
+        const j = idx(x, y);
+        if (!cellType[j]) continue;
+
+        const avgVort = (vorticityMag[idx(x + 1, y)] + vorticityMag[idx(x - 1, y)] +
+                        vorticityMag[idx(x, y + 1)] + vorticityMag[idx(x, y - 1)]) * 0.25;
+        const grad = Math.abs(avgVort) + 1e-6;
+        const ngx = (vorticityMag[idx(x, y + 1)] - vorticityMag[idx(x, y - 1)]) / (2 * grad + 1e-8);
+        const ngy = (vorticityMag[idx(x - 1, y)] - vorticityMag[idx(x + 1, y)]) / (2 * grad + 1e-8);
+
+        u[j] += ngx * vorticityMag[j] * scale;
+        v[j] += ngy * vorticityMag[j] * scale;
+      }
+    }
+  }
+
+  function enforceGridBoundaries() {
+    // Apply boundary conditions across all Z slices
+    for (let z = 0; z < NZ; z++) {
+      for (let x = 0; x < NX; x++) {
+        let j = idx(x, 0, z); u[j] = 0; v[j] = Math.max(0, v[j]);
+        j = idx(x, NY - 1, z); u[j] = 0; v[j] = Math.min(0, v[j]);
+      }
+      for (let y = 0; y < NY; y++) {
+        let j = idx(0, y, z); u[j] = Math.max(0, u[j]); v[j] = 0;
+        j = idx(NX - 1, y, z); u[j] = Math.min(0, u[j]); v[j] = 0;
+      }
+    }
+
+    // Z-axis walls
+    for (let y = 0; y < NY; y++) {
+      for (let x = 0; x < NX; x++) {
+        let j = idx(x, y, 0); w[j] = Math.max(0, w[j]);
+        j = idx(x, y, NZ - 1); w[j] = Math.min(0, w[j]);
+      }
+    }
+  }
+
+  function gridToParticles() {
+    const flipRatio = Number(flipEl.value);
+    const picRatio = 1 - flipRatio;
+    const maxSpeed = 90;
+
+    for (let i = 0; i < pCount; i++) {
+      const x = pX[i];
+      const y = pY[i];
+      const z = pZ[i];
+
+      const picVX = sampleField(u, x, y, z);
+      const picVY = sampleField(v, x, y, z);
+      const picVZ = sampleField(w, x, y, z);
+
+      const oldVX = sampleField(uOld, x, y, z);
+      const oldVY = sampleField(vOld, x, y, z);
+      const oldVZ = sampleField(wOld, x, y, z);
+
+      const gridDvx = picVX - oldVX;
+      const gridDvy = picVY - oldVY;
+      const gridDvz = picVZ - oldVZ;
+
+      const flipVx = pVX[i] + gridDvx;
+      const flipVy = pVY[i] + gridDvy;
+      const flipVz = pVZ[i] + gridDvz;
+
+      pVX[i] = flipRatio * flipVx + picRatio * picVX;
+      pVY[i] = flipRatio * flipVy + picRatio * picVY;
+      pVZ[i] = flipRatio * flipVz + picRatio * picVZ;
+
+      const sp = Math.hypot(pVX[i], pVY[i], pVZ[i]);
+      if (sp > maxSpeed) {
+        const s = maxSpeed / sp;
+        pVX[i] *= s; pVY[i] *= s; pVZ[i] *= s;
+      }
+    }
+  }
+
+  function advectParticles(dt) {
+    for (let i = 0; i < pCount; i++) {
+      // Improved advection: mid-point method, including Z
+      const vx0 = pVX[i];
+      const vy0 = pVY[i];
+      const vz0 = pVZ[i];
+
+      const midX = pX[i] + vx0 * dt * 0.5;
+      const midY = pY[i] + vy0 * dt * 0.5;
+      const midZ = pZ[i] + vz0 * dt * 0.5;
+
+      // Sample at midpoint for better accuracy (z optional)
+      const gridVx = sampleField(u, midX, midY, midZ);
+      const gridVy = sampleField(v, midX, midY, midZ);
+      const gridVz = sampleField(w, midX, midY, midZ);
+
+      // Blend particle and grid velocity - moderate blending for stability
+      pVX[i] = lerp(pVX[i], gridVx, 0.065);
+      pVY[i] = lerp(pVY[i], gridVy, 0.065);
+      pVZ[i] = lerp(pVZ[i], gridVz, 0.065);
+
+      // Update position
+      pX[i] += pVX[i] * dt;
+      pY[i] += pVY[i] * dt;
+      pZ[i] += pVZ[i] * dt;
+
+      collideParticle(i);
+    }
+  }
+
+  function collideParticle(i) {
+    const bounce = -0.22;
+    const friction = 0.75;
+    const pad = 1.12;
+
+    // Boundary collisions with proper response
+    if (pX[i] < pad) {
+      pX[i] = pad;
+      if (pVX[i] < 0) pVX[i] *= bounce;
+      pVY[i] *= friction;
+    }
+    if (pX[i] > NX - pad) {
+      pX[i] = NX - pad;
+      if (pVX[i] > 0) pVX[i] *= bounce;
+      pVY[i] *= friction;
+    }
+    if (pY[i] < pad) {
+      pY[i] = pad;
+      if (pVY[i] < 0) pVY[i] *= bounce;
+      pVX[i] *= friction;
+    }
+    if (pY[i] > NY - pad) {
+      pY[i] = NY - pad;
+      if (pVY[i] > 0) pVY[i] *= bounce;
+      pVX[i] *= friction;
+    }
+    // Z-axis boundaries
+    if (pZ[i] < pad) {
+      pZ[i] = pad;
+      if (pVZ[i] < 0) pVZ[i] *= bounce;
+      pVX[i] *= friction;
+      pVY[i] *= friction;
+    }
+    if (pZ[i] > NZ - pad) {
+      pZ[i] = NZ - pad;
+      if (pVZ[i] > 0) pVZ[i] *= bounce;
+      pVX[i] *= friction;
+      pVY[i] *= friction;
+    }
+  }
+
+  function particleSeparation() {
+    // Stable particle separation with spatial hashing
+    const minD = 0.42;
+    const minD2 = minD * minD;
+
+    // First pass
+    const buckets = new Int32Array(N);
+    buckets.fill(-1);
+    const next = new Int32Array(pCount);
+
+    for (let i = 0; i < pCount; i++) {
+      const x = clamp(Math.floor(pX[i]), 1, NX - 2);
+      const y = clamp(Math.floor(pY[i]), 1, NY - 2);
+      const z = clamp(Math.floor(pZ[i]), 1, NZ - 2);
+      const j = idx(x, y, z);
+      next[i] = buckets[j];
+      buckets[j] = i;
+    }
+
+    for (let i = 0; i < pCount; i++) {
+      const cx = clamp(Math.floor(pX[i]), 1, NX - 2);
+      const cy = clamp(Math.floor(pY[i]), 1, NY - 2);
+      const cz = clamp(Math.floor(pZ[i]), 1, NZ - 2);
+
+      for (let oz = -1; oz <= 1; oz++) {
+        for (let oy = -1; oy <= 1; oy++) {
+          for (let ox = -1; ox <= 1; ox++) {
+            let k = buckets[idx(cx + ox, cy + oy, cz + oz)];
+            while (k !== -1) {
+              if (k > i) {
+                const dx = pX[i] - pX[k];
+                const dy = pY[i] - pY[k];
+                const dz = pZ[i] - pZ[k];
+                const d2 = dx * dx + dy * dy + dz * dz;
+                if (d2 > 0.00001 && d2 < minD2) {
+                  const d = Math.sqrt(d2);
+                  const overlap = minD - d + 0.008;
+                  const pushScale = overlap * 0.038;
+                  const invD = 1.0 / (d + 1e-8);
+                  const nx = dx * invD;
+                  const ny = dy * invD;
+                  const nz = dz * invD;
+
+                  // Conservative position correction (3D)
+                  pX[i] += nx * pushScale * 1.0;
+                  pY[i] += ny * pushScale * 1.0;
+                  pZ[i] += nz * pushScale * 1.0;
+                  pX[k] -= nx * pushScale * 1.0;
+                  pY[k] -= ny * pushScale * 1.0;
+                  pZ[k] -= nz * pushScale * 1.0;
+
+                  // Conservative velocity response
+                  const vrep = overlap * 0.08;
+                  pVX[i] += nx * vrep;
+                  pVY[i] += ny * vrep;
+                  pVZ[i] += nz * vrep;
+                  pVX[k] -= nx * vrep;
+                  pVY[k] -= ny * vrep;
+                  pVZ[k] -= nz * vrep;
+                }
+              }
+              k = next[k];
+            }
+          }
+        }
+      }
+    }
+
+    // Second pass: rebuild buckets with updated positions (3D)
+    buckets.fill(-1);
+    for (let i = 0; i < pCount; i++) {
+      const x = clamp(Math.floor(pX[i]), 1, NX - 2);
+      const y = clamp(Math.floor(pY[i]), 1, NY - 2);
+      const z = clamp(Math.floor(pZ[i]), 1, NZ - 2);
+      const j = idx(x, y, z);
+      next[i] = buckets[j];
+      buckets[j] = i;
+    }
+
+    for (let i = 0; i < pCount; i++) {
+      const cx = clamp(Math.floor(pX[i]), 1, NX - 2);
+      const cy = clamp(Math.floor(pY[i]), 1, NY - 2);
+      const cz = clamp(Math.floor(pZ[i]), 1, NZ - 2);
+
+      for (let oz = -1; oz <= 1; oz++) {
+        for (let oy = -1; oy <= 1; oy++) {
+          for (let ox = -1; ox <= 1; ox++) {
+            let k = buckets[idx(cx + ox, cy + oy, cz + oz)];
+            while (k !== -1) {
+              if (k !== i) {
+                const dx = pX[i] - pX[k];
+                const dy = pY[i] - pY[k];
+                const dz = pZ[i] - pZ[k];
+                const d2 = dx * dx + dy * dy + dz * dz;
+                if (d2 > 0.00001 && d2 < minD2 * 0.85) {
+                  const d = Math.sqrt(d2);
+                  const overlap = minD - d + 0.015;
+                  const pushScale = overlap * 0.045;
+                  const invD = 1.0 / (d + 1e-8);
+                  const nx = dx * invD;
+                  const ny = dy * invD;
+                  const nz = dz * invD;
+                  pX[i] += nx * pushScale * 1.2;
+                  pY[i] += ny * pushScale * 1.2;
+                  pZ[i] += nz * pushScale * 1.2;
+                }
+              }
+              k = next[k];
+            }
+          }
+        }
+      }
+    }
+  }
+
+  function reseedParticles() {
+    // Maintain particle count by adding particles in empty regions
+    if (pCount < MAX_PARTICLES * 0.55) {
+      const targetAdd = Math.floor(MAX_PARTICLES * 0.55 - pCount);
+      for (let i = 0; i < targetAdd && pCount < MAX_PARTICLES; i++) {
+        let x = rand(NX * 0.2, NX * 0.8);
+        let y = rand(NY * 0.4, NY * 0.95);
+        
+        // Check if near fluid
+        const gx = clamp(Math.floor(x), 0, NX - 1);
+        const gy = clamp(Math.floor(y), 0, NY - 1);
+        if (cellType[idx(gx, gy)] > 0 || cellType[idx(clamp(gx + 1, 0, NX - 1), gy)] > 0) {
+          addParticle(x, y, rand(-0.8, 0.8), rand(-0.3, 0.3));
+        }
+      }
+    }
+  }
+
+  function step(dt) {
+    // Cap dt for numerical stability
+    dt = Math.min(dt, 0.02);
+
+    pushParticlesWithMouse(dt);
+    scatterVelocityToGrid();
+
+    uOld.set(u);
+    vOld.set(v);
+
+    applyGravityAndViscosity(dt);
+
+    if (mouse.right) {
+      splatGridVelocity(mouse.gx, mouse.gy, Number(brushEl.value) * 1.55, mouse.vx * 0.35 * Number(mousePowerEl.value), mouse.vy * 0.35 * Number(mousePowerEl.value), false);
+    }
+
+    // Stable pressure projection with adequate iterations
+    project(Math.max(65, Number(itersEl.value)));
+
+    gridToParticles();
+    advectParticles(dt);
+    particleSeparation();
+    reseedParticles();
+
+    mouse.pgx = mouse.gx;
+    mouse.pgy = mouse.gy;
+    mouse.vx *= Math.pow(0.18, dt * 60);
+    mouse.vy *= Math.pow(0.18, dt * 60);
+  }
+
+  function rebuildMassForRender() {
+    // Project 3D particle distribution into a 2D mass buffer for rendering
+    const mass2D = new Float32Array(NX * NY);
+    for (let i = 0; i < pCount; i++) {
+      const x = clamp(pX[i], 0.5, NX - 1.5);
+      const y = clamp(pY[i], 0.5, NY - 1.5);
+      const x0 = Math.floor(x);
+      const y0 = Math.floor(y);
+      const tx = x - x0;
+      const ty = y - y0;
+      const j00 = x0 + y0 * NX;
+      const j10 = (x0 + 1) + y0 * NX;
+      const j01 = x0 + (y0 + 1) * NX;
+      const j11 = (x0 + 1) + (y0 + 1) * NX;
+      mass2D[j00] += (1 - tx) * (1 - ty);
+      mass2D[j10] += tx * (1 - ty);
+      mass2D[j01] += (1 - tx) * ty;
+      mass2D[j11] += tx * ty;
+    }
+    // Copy projected mass back into the first Z-slice of the global mass array for compatibility
+    mass.fill(0);
+    for (let y = 0; y < NY; y++) {
+      for (let x = 0; x < NX; x++) {
+        mass[idx(x, y, 0)] = mass2D[x + y * NX];
+      }
+    }
+  }
+
+  function renderGridField() {
+    const mode = renderModeEl.value;
+
+    if (mode === "particles") {
+      drawBackground();
+      drawParticlesOnly();
+      drawOverlays();
+      return;
+    }
+
+    rebuildMassForRender();
+
+    let minP = 1e9, maxP = -1e9;
+    if (mode === "pressure") {
+      for (let i = 0; i < N; i++) {
+        if (!cellType[i]) continue;
+        if (pressure[i] < minP) minP = pressure[i];
+        if (pressure[i] > maxP) maxP = pressure[i];
+      }
+      if (maxP - minP < 1e-5) { minP = -1; maxP = 1; }
+    }
+
+    for (let y = 0; y < NY; y++) {
+      for (let x = 0; x < NX; x++) {
+        const j = idx(x, y);
+        const p = j * 4;
+        let r = 4, g = 7, b = 16;
+
+        if (mode === "water") {
+          const m = clamp(mass[j] * 0.58, 0, 1);
+          const edge = clamp((mass[j] - 0.55) * 1.8, 0, 1);
+          const speed = clamp(Math.hypot(u[j], v[j]) * 0.035, 0, 1);
+          const depth = clamp(y / NY, 0, 1);
+
+          r = lerp(4, 24 + speed * 25, m);
+          g = lerp(7, 108 + speed * 60 + edge * 32, m);
+          b = lerp(16, 185 + speed * 58 + edge * 42, m);
+
+          // Subtle darker deep part.
+          r *= 1.0 - depth * 0.12 * m;
+          g *= 1.0 - depth * 0.08 * m;
+          b *= 1.0 + depth * 0.05 * m;
+
+          if (edge > 0.2) {
+            r += edge * 52;
+            g += edge * 72;
+            b += edge * 80;
+          }
+        } else if (mode === "speed") {
+          const s = clamp(Math.hypot(u[j], v[j]) * 4.4, 0, 255);
+          r = s * 0.18; g = s * 0.62; b = s;
+        } else if (mode === "pressure") {
+          const t = clamp((pressure[j] - minP) / (maxP - minP), 0, 1);
+          r = 255 * t;
+          g = 80 * (1 - Math.abs(t - 0.5) * 2);
+          b = 255 * (1 - t);
+        } else if (mode === "mass") {
+          const m = clamp(mass[j] * 70, 0, 255);
+          r = m * 0.35; g = m * 0.78; b = m;
+        }
+
+        pix[p] = clamp(r, 0, 255) | 0;
+        pix[p + 1] = clamp(g, 0, 255) | 0;
+        pix[p + 2] = clamp(b, 0, 255) | 0;
+        pix[p + 3] = 255;
+      }
+    }
+
+    offCtx.putImageData(img, 0, 0);
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = "#050812";
+    ctx.fillRect(0, 0, CW, CH);
+    ctx.drawImage(off, 0, 0, CW, CH);
+    ctx.restore();
+
+    if (mode === "water") {
+      drawSpecularParticles();
+    }
+
+    drawOverlays();
+  }
+
+  function drawBackground() {
+    const grad = ctx.createLinearGradient(0, 0, 0, CH);
+    grad.addColorStop(0, "#060914");
+    grad.addColorStop(0.58, "#050710");
+    grad.addColorStop(1, "#030409");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, CW, CH);
+  }
+
+  function worldToCanvasX(x) { return x / NX * CW; }
+  function worldToCanvasY(y) { return y / NY * CH; }
+
+  function drawParticlesOnly() {
+    const sx = CW / NX;
+    const sy = CH / NY;
+    const radius = Math.max(1.3, Math.min(sx, sy) * 0.55);
+
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (let i = 0; i < pCount; i++) {
+      const sp = clamp(Math.hypot(pVX[i], pVY[i]) * 0.018, 0, 1);
+      const x = worldToCanvasX(pX[i]);
+      const y = worldToCanvasY(pY[i]);
+
+      ctx.fillStyle = `rgba(${Math.floor(42 + sp * 70)},${Math.floor(155 + sp * 70)},255,0.78)`;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawSpecularParticles() {
+    const sx = CW / NX;
+    const sy = CH / NY;
+    const radius = Math.max(0.8, Math.min(sx, sy) * 0.23);
+
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (let i = 0; i < pCount; i += 3) {
+      const x = worldToCanvasX(pX[i]);
+      const y = worldToCanvasY(pY[i]);
+      const sp = clamp(Math.hypot(pVX[i], pVY[i]) * 0.012, 0, 1);
+      ctx.fillStyle = `rgba(185,235,255,${0.10 + sp * 0.18})`;
+      ctx.beginPath();
+      ctx.arc(x, y, radius * (1 + sp), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawOverlays() {
+    if (showGrid) drawGrid();
+    if (showVelocity) drawVelocity();
+    drawMouseBrush();
+  }
+
+  function drawGrid() {
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,255,255,0.045)";
+    ctx.lineWidth = 1;
+
+    const step = Math.max(6, Math.floor(NX / 28));
+    for (let x = 0; x <= NX; x += step) {
+      const px = worldToCanvasX(x);
+      ctx.beginPath();
+      ctx.moveTo(px, 0);
+      ctx.lineTo(px, CH);
+      ctx.stroke();
+    }
+    for (let y = 0; y <= NY; y += step) {
+      const py = worldToCanvasY(y);
+      ctx.beginPath();
+      ctx.moveTo(0, py);
+      ctx.lineTo(CW, py);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawVelocity() {
+    ctx.save();
+    ctx.strokeStyle = "rgba(210,240,255,0.62)";
+    ctx.lineWidth = Math.max(1, DPR);
+
+    const step = Math.max(7, Math.floor(NX / 28));
+    const scale = Math.min(CW / NX, CH / NY) * 0.22;
+
+    for (let y = step; y < NY - step; y += step) {
+      for (let x = step; x < NX - step; x += step) {
+        const j = idx(x, y);
+        const vx = u[j];
+        const vy = v[j];
+        const len = Math.hypot(vx, vy);
+        if (len < 0.4) continue;
+
+        const sx = worldToCanvasX(x);
+        const sy = worldToCanvasY(y);
+        const ex = sx + clamp(vx * scale, -28 * DPR, 28 * DPR);
+        const ey = sy + clamp(vy * scale, -28 * DPR, 28 * DPR);
+
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(ex, ey);
+        ctx.stroke();
+
+        const a = Math.atan2(ey - sy, ex - sx);
+        const ah = 4 * DPR;
+        ctx.beginPath();
+        ctx.moveTo(ex, ey);
+        ctx.lineTo(ex - Math.cos(a - 0.55) * ah, ey - Math.sin(a - 0.55) * ah);
+        ctx.moveTo(ex, ey);
+        ctx.lineTo(ex - Math.cos(a + 0.55) * ah, ey - Math.sin(a + 0.55) * ah);
+        ctx.stroke();
+      }
+    }
+
+    ctx.restore();
+  }
+
+  function drawMouseBrush() {
+    if (!mouse.left && !mouse.right) return;
+
+    ctx.save();
+    const r = Number(brushEl.value) / NX * CW * (mouse.right ? 1.55 : 1.0);
+    ctx.strokeStyle = mouse.right ? "rgba(255,180,130,0.85)" : "rgba(140,220,255,0.8)";
+    ctx.fillStyle = mouse.shift ? "rgba(110,210,255,0.12)" : "rgba(110,210,255,0.06)";
+    ctx.lineWidth = 2 * DPR;
+    ctx.beginPath();
+    ctx.arc(worldToCanvasX(mouse.gx), worldToCanvasY(mouse.gy), r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function displayStats() {
+    if (frame % 8 !== 0) return;
+
+    let maxSpeed = 0, fluidCells = 0, maxMass = 0;
+    for (let i = 0; i < N; i += 2) {
+      if (cellType[i]) fluidCells++;
+      const s = Math.hypot(u[i], v[i]);
+      if (s > maxSpeed) maxSpeed = s;
+      if (mass[i] > maxMass) maxMass = mass[i];
+    }
+
+    statsEl.innerHTML =
+      `Grid: <b>${NX} × ${NY}</b> = ${(NX * NY).toLocaleString("tr-TR")} hücre &nbsp; Particles: <b>${pCount.toLocaleString("tr-TR")}</b><br>` +
+      `Transfer: P2G → pressure projection → G2P FLIP/PIC blend<br>` +
+      `FPS: <b>${fps.toFixed(0)}</b> &nbsp; active cells: <b>${(fluidCells * 2).toLocaleString("tr-TR")}</b> &nbsp; max speed: <b>${maxSpeed.toFixed(1)}</b> &nbsp; max mass: <b>${maxMass.toFixed(2)}</b>`;
+  }
+
+  function pointer(e) {
+    const rect = canvas.getBoundingClientRect();
+    const px = clamp(e.clientX - rect.left, 0, rect.width);
+    const py = clamp(e.clientY - rect.top, 0, rect.height);
+    return {
+      x: px,
+      y: py,
+      gx: px / rect.width * NX,
+      gy: py / rect.height * NY
+    };
+  }
+
+  canvas.addEventListener("contextmenu", e => e.preventDefault());
+
+  window.addEventListener("mousemove", e => {
+    const p = pointer(e);
+    const oldGX = mouse.gx;
+    const oldGY = mouse.gy;
+
+    mouse.x = p.x;
+    mouse.y = p.y;
+    mouse.gx = p.gx;
+    mouse.gy = p.gy;
+
+    mouse.vx += (mouse.gx - oldGX) * 62;
+    mouse.vy += (mouse.gy - oldGY) * 62;
+    mouse.shift = e.shiftKey;
+  });
+
+  window.addEventListener("mousedown", e => {
+    const p = pointer(e);
+    mouse.gx = mouse.pgx = p.gx;
+    mouse.gy = mouse.pgy = p.gy;
+    mouse.vx = 0;
+    mouse.vy = 0;
+    mouse.shift = e.shiftKey;
+
+    if (e.button === 0) mouse.left = true;
+    if (e.button === 2) mouse.right = true;
+  });
+
+  window.addEventListener("mouseup", e => {
+    if (e.button === 0) mouse.left = false;
+    if (e.button === 2) mouse.right = false;
+  });
+
+  window.addEventListener("dblclick", e => {
+    const p = pointer(e);
+    for (let k = 0; k < 26; k++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = rand(18, 76);
+      splatGridVelocity(
+        p.gx + rand(-4, 4),
+        p.gy + rand(-4, 4),
+        rand(3.5, 8.5),
+        Math.cos(a) * sp,
+        Math.sin(a) * sp - rand(8, 28),
+        false
+      );
+    }
+
+    const countBefore = pCount;
+    addDrop(p.gx, p.gy, 6);
+    for (let i = countBefore; i < pCount; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = rand(8, 44);
+      pVX[i] += Math.cos(a) * sp;
+      pVY[i] += Math.sin(a) * sp - 18;
+    }
+  });
+
+  window.addEventListener("keydown", e => {
+    if (e.code === "Space") seedTank();
+    if (e.key.toLowerCase() === "v") {
+      showVelocity = !showVelocity;
+      velBtn.textContent = "Velocity: " + (showVelocity ? "On" : "Off");
+    }
+    if (e.key.toLowerCase() === "g") {
+      showGrid = !showGrid;
+      gridBtn.textContent = "Grid: " + (showGrid ? "On" : "Off");
+    }
+    if (e.key.toLowerCase() === "p") {
+      paused = !paused;
+      pauseBtn.textContent = paused ? "Resume" : "Pause";
+    }
+    if (e.key === "1") renderModeEl.value = "water";
+    if (e.key === "2") renderModeEl.value = "particles";
+    if (e.key === "3") renderModeEl.value = "speed";
+    if (e.key === "4") renderModeEl.value = "pressure";
+    if (e.key === "5") renderModeEl.value = "mass";
+  });
+
+  velBtn.addEventListener("click", () => {
+    showVelocity = !showVelocity;
+    velBtn.textContent = "Velocity: " + (showVelocity ? "On" : "Off");
+  });
+
+  gridBtn.addEventListener("click", () => {
+    showGrid = !showGrid;
+    gridBtn.textContent = "Grid: " + (showGrid ? "On" : "Off");
+  });
+
+  pauseBtn.addEventListener("click", () => {
+    paused = !paused;
+    pauseBtn.textContent = paused ? "Resume" : "Pause";
+  });
+
+  resetBtn.addEventListener("click", seedTank);
+  clearBtn.addEventListener("click", () => { clearGrid(); clearParticles(); });
+  dropBtn.addEventListener("click", () => addDrop(NX * rand(0.35, 0.65), NY * rand(0.14, 0.32), rand(6, 10)));
+
+  function loop(now) {
+    const rawDt = Math.min(1 / 25, Math.max(1 / 144, (now - last) / 1000));
+    fps = lerp(fps, 1 / rawDt, 0.045);
+    last = now;
+
+    if (!paused) {
+      const substeps = rawDt > 1 / 50 ? 2 : 1;
+      const dt = rawDt / substeps;
+
+      for (let s = 0; s < substeps; s++) {
+        step(dt);
+      }
+    }
+
+    renderGridField();
+    displayStats();
+
+    frame++;
+    requestAnimationFrame(loop);
+  }
+
+  seedTank();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
